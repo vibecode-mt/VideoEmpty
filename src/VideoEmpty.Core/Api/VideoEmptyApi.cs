@@ -59,6 +59,20 @@ public sealed class VideoEmptyApi : IVideoEmptyApi
         return project;
     }
 
+    public async Task<Project> ReplaceVideoAsync(Project project, string videoPath, int shiftMs, CancellationToken ct = default)
+    {
+        await SetVideoAsync(project, videoPath, ct).ConfigureAwait(false);
+        if (shiftMs != 0)
+        {
+            foreach (var inst in project.Instances)
+                inst.StartMs = Math.Max(0, inst.StartMs + shiftMs);
+        }
+        return project;
+    }
+
+    public Task<VideoInfo> ProbeVideoAsync(string videoPath, CancellationToken ct = default) =>
+        _probe.ProbeAsync(videoPath, ct);
+
     public IReadOnlyList<Template> ListTemplates(Project project) => project.Templates;
 
     public Template GetTemplate(Project project, string templateId) =>
@@ -145,6 +159,45 @@ public sealed class VideoEmptyApi : IVideoEmptyApi
     }
 
     public IReadOnlyList<TemplateInstance> ListInstances(Project project) => project.Instances;
+
+    public ShiftInstancesResult ShiftInstanceTimes(Project project, ShiftInstancesRequest request)
+    {
+        IEnumerable<TemplateInstance> targets;
+        if (request.Scope == InstanceShiftScope.All)
+        {
+            targets = project.Instances;
+        }
+        else
+        {
+            if (string.IsNullOrEmpty(request.ReferenceInstanceId))
+                throw new ArgumentException("ReferenceInstanceId is required when Scope is not All.", nameof(request));
+            var reference = project.Instances.FirstOrDefault(i => i.Id == request.ReferenceInstanceId)
+                ?? throw new KeyNotFoundException($"Instance '{request.ReferenceInstanceId}' not found.");
+            var refStart = reference.StartMs;
+            targets = request.Scope switch
+            {
+                InstanceShiftScope.Before       => project.Instances.Where(i => i.StartMs <  refStart),
+                InstanceShiftScope.After        => project.Instances.Where(i => i.StartMs >  refStart),
+                InstanceShiftScope.AtOrBefore   => project.Instances.Where(i => i.StartMs <= refStart),
+                InstanceShiftScope.AtOrAfter    => project.Instances.Where(i => i.StartMs >= refStart),
+                InstanceShiftScope.OnlyReference => new[] { reference },
+                _ => throw new ArgumentOutOfRangeException(nameof(request))
+            };
+        }
+
+        int shifted = 0, clamped = 0;
+        foreach (var inst in targets.ToList())
+        {
+            var newStart = inst.StartMs + request.ShiftMs;
+            if (newStart < 0) { newStart = 0; clamped++; }
+            if (newStart != inst.StartMs)
+            {
+                inst.StartMs = newStart;
+            }
+            shifted++;
+        }
+        return new ShiftInstancesResult(shifted, clamped);
+    }
 
     public Task<byte[]> RenderFrameAsync(Project project, int timeMs, CancellationToken ct = default)
     {

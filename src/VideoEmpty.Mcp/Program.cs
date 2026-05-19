@@ -9,7 +9,7 @@ using VideoEmpty.Rendering;
 // Reads Content-Length-framed messages on stdin and replies on stdout.
 //
 // Tools exposed (tools/call):
-//   create_project, open_project, save_project, set_video,
+//   create_project, open_project, save_project, set_video, replace_video,
 //   list_templates, create_template, update_template, delete_template,
 //   list_instances, add_instance, update_instance, delete_instance,
 //   start_export, get_job_status, cancel_job
@@ -96,6 +96,14 @@ JsonNode? Invoke(string name, JsonNode? args)
             projects[args!["projectId"]!.GetValue<string>()] = p;
             return Wrap(p);
         }
+        case "replace_video":
+        {
+            var p = ProjFromArgs();
+            var shift = args!["shiftMs"]?.GetValue<int>() ?? 0;
+            p = api.ReplaceVideoAsync(p, args!["path"]!.GetValue<string>(), shift).GetAwaiter().GetResult();
+            projects[args!["projectId"]!.GetValue<string>()] = p;
+            return Wrap(p);
+        }
         case "list_templates":  return Wrap(api.ListTemplates(ProjFromArgs()));
         case "list_instances":  return Wrap(api.ListInstances(ProjFromArgs()));
         case "create_template":
@@ -124,6 +132,11 @@ JsonNode? Invoke(string name, JsonNode? args)
         case "delete_instance":
             api.DeleteInstance(ProjFromArgs(), args!["instanceId"]!.GetValue<string>());
             return Wrap(new { ok = true });
+        case "shift_instance_times":
+        {
+            var req = JsonSerializer.Deserialize<ShiftInstancesRequest>(args!["request"]!.ToJsonString(), jsonOpts)!;
+            return Wrap(api.ShiftInstanceTimes(ProjFromArgs(), req));
+        }
         case "start_export":
         {
             var opts = JsonSerializer.Deserialize<ExportOptions>(args!["options"]!.ToJsonString(), jsonOpts)!;
@@ -221,6 +234,7 @@ static JsonArray ToolList()
         Tool("open_project", "Open a .veproj project file."),
         Tool("save_project", "Save the project to a .veproj file."),
         Tool("set_video", "Attach a source video to the project."),
+        Tool("replace_video", "Replace the source video and shift all instances by shiftMs (positive=later, negative=earlier)."),
         Tool("list_templates", "List templates in a project."),
         Tool("create_template", "Add a new template."),
         Tool("update_template", "Update a template."),
@@ -229,6 +243,7 @@ static JsonArray ToolList()
         Tool("add_instance", "Place a template on the video at (centerX, centerY, startMs)."),
         Tool("update_instance", "Update an existing instance."),
         Tool("delete_instance", "Remove an instance from the timeline."),
+        Tool("shift_instance_times", "Bulk-shift StartMs of instances; request: { shiftMs, scope (All|Before|After|AtOrBefore|AtOrAfter|OnlyReference), referenceInstanceId? }."),
         Tool("start_export", "Start an export job; returns jobId."),
         Tool("get_job_status", "Get the status/progress of an export job."),
         Tool("cancel_job", "Cancel a running export job."),

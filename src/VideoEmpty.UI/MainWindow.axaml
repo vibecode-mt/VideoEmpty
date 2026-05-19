@@ -109,6 +109,7 @@
                 <Button x:Name="OpenVideoButton" Content="Open Video…"/>
                 <Button x:Name="SaveProjectButton" Content="Save Project…"/>
                 <Button x:Name="UndoButton" Content="Undo"/>
+                <Button x:Name="ShiftInstancesButton" Content="Shift Times…" ToolTip.Tip="Bulk-shift StartMs of all instances (or those before/after the selected one). Use this to undo a bad video-replace shift."/>
                 <Button x:Name="ExportButton" Content="Export Video…" ToolTip.Tip="Export the video with captions"/>
                 <Button x:Name="ExportSubtitlesButton" Content="Export Subtitles…" ToolTip.Tip="Export captions as .srt, .vtt, or .json"/>
                 <Button x:Name="ExportCapCutButton" Content="Export to CapCut… (Preview)" ToolTip.Tip="[Preview] Append all template instances into an existing CapCut PC project (creates a clone by default). This feature is in preview - geometry, fonts and animations are still being calibrated; review the result in CapCut before relying on it."/>

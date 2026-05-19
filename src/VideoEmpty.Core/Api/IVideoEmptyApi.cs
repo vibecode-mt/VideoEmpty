@@ -62,6 +62,33 @@ public sealed class JobStatus
 }
 
 /// <summary>
+/// Scope selector for <see cref="IVideoEmptyApi.ShiftInstanceTimes"/>.
+/// All comparisons are against the reference instance's current <c>StartMs</c>.
+/// </summary>
+public enum InstanceShiftScope
+{
+    /// <summary>Every instance in the project.</summary>
+    All,
+    /// <summary>Instances with <c>StartMs &lt; reference.StartMs</c>.</summary>
+    Before,
+    /// <summary>Instances with <c>StartMs &gt; reference.StartMs</c>.</summary>
+    After,
+    /// <summary>Instances with <c>StartMs &lt;= reference.StartMs</c> (includes the reference itself).</summary>
+    AtOrBefore,
+    /// <summary>Instances with <c>StartMs &gt;= reference.StartMs</c> (includes the reference itself).</summary>
+    AtOrAfter,
+    /// <summary>Only the reference instance.</summary>
+    OnlyReference
+}
+
+public sealed record ShiftInstancesRequest(
+    int ShiftMs,
+    InstanceShiftScope Scope = InstanceShiftScope.All,
+    string? ReferenceInstanceId = null);
+
+public sealed record ShiftInstancesResult(int ShiftedCount, int ClampedToZeroCount);
+
+/// <summary>
 /// Unified API surface for VideoEmpty. Implemented in-process; UI calls it directly,
 /// HTTP server and MCP server are thin adapters over this interface.
 /// </summary>
@@ -72,6 +99,18 @@ public interface IVideoEmptyApi
     Project OpenProject(string path);
     void SaveProject(Project project, string path);
     Task<Project> SetVideoAsync(Project project, string videoPath, CancellationToken ct = default);
+
+    /// <summary>
+    /// Replaces the project's video file and shifts every template instance's start time
+    /// by <paramref name="shiftMs"/> milliseconds (positive = later, negative = earlier).
+    /// Instances that would end up before 0ms are clamped to 0. Use this when swapping
+    /// in a new recording whose timeline is offset from the original (e.g. an extra
+    /// intro clip in front).
+    /// </summary>
+    Task<Project> ReplaceVideoAsync(Project project, string videoPath, int shiftMs, CancellationToken ct = default);
+
+    /// <summary>Probes a video file for resolution, fps and duration without modifying any project.</summary>
+    Task<VideoInfo> ProbeVideoAsync(string videoPath, CancellationToken ct = default);
 
     // Templates
     IReadOnlyList<Template> ListTemplates(Project project);
@@ -86,6 +125,16 @@ public interface IVideoEmptyApi
     TemplateInstance UpdateInstance(Project project, UpdateInstanceRequest request);
     void DeleteInstance(Project project, string instanceId);
     IReadOnlyList<TemplateInstance> ListInstances(Project project);
+
+    /// <summary>
+    /// Bulk-shifts the <c>StartMs</c> of template instances by <paramref name="request"/>.ShiftMs
+    /// (positive = later, negative = earlier). The <see cref="ShiftInstancesRequest.Scope"/>
+    /// selects which instances are affected; for non-<see cref="InstanceShiftScope.All"/> scopes,
+    /// <see cref="ShiftInstancesRequest.ReferenceInstanceId"/> must be supplied.
+    /// Resulting times are clamped to 0; the result reports how many instances were touched
+    /// and how many were clamped (so the UI can warn about data loss).
+    /// </summary>
+    ShiftInstancesResult ShiftInstanceTimes(Project project, ShiftInstancesRequest request);
 
     // Preview
     Task<byte[]> RenderFrameAsync(Project project, int timeMs, CancellationToken ct = default);

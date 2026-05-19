@@ -53,6 +53,14 @@ app.MapPost("/projects/{id}/video", async (string id, SetVideoRequest req, IVide
     return Results.Ok(p);
 });
 
+app.MapPost("/projects/{id}/video/replace", async (string id, ReplaceVideoRequest req, IVideoEmptyApi api, ProjectStore store, CancellationToken ct) =>
+{
+    if (!store.TryGet(id, out var p)) return Results.NotFound();
+    p = await api.ReplaceVideoAsync(p, req.Path, req.ShiftMs, ct);
+    store.Put(id, p);
+    return Results.Ok(p);
+});
+
 // ---- Templates ----
 app.MapGet("/projects/{id}/templates", (string id, IVideoEmptyApi api, ProjectStore store) =>
     store.TryGet(id, out var p) ? Results.Ok(api.ListTemplates(p)) : Results.NotFound());
@@ -87,6 +95,9 @@ app.MapDelete("/projects/{id}/instances/{instanceId}", (string id, string instan
     return Results.Ok();
 });
 
+app.MapPost("/projects/{id}/instances/shift", (string id, ShiftInstancesRequest req, IVideoEmptyApi api, ProjectStore store) =>
+    store.TryGet(id, out var p) ? Results.Ok(api.ShiftInstanceTimes(p, req)) : Results.NotFound());
+
 // ---- Preview ----
 app.MapGet("/projects/{id}/preview/{timeMs:int}", async (string id, int timeMs, IVideoEmptyApi api, ProjectStore store, CancellationToken ct) =>
 {
@@ -119,6 +130,7 @@ app.Run();
 public sealed record CreateProjectRequest(string Name);
 public sealed record SavePathRequest(string Path);
 public sealed record SetVideoRequest(string Path);
+public sealed record ReplaceVideoRequest(string Path, int ShiftMs);
 
 /// <summary>Simple in-memory project store keyed by id.</summary>
 public sealed class ProjectStore

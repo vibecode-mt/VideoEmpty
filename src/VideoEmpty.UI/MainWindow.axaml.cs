@@ -90,6 +90,7 @@ public partial class MainWindow : Window
 
         SaveProjectButton.Click += OnSaveProject;
         UndoButton.Click += OnUndo;
+        ShiftInstancesButton.Click += OnShiftInstances;
         SettingsButton.Click += OnSettings;
         DashboardButton.Click += (_, _) => ShowDashboard();
         OpenVideoButton.Click += OnOpenVideo;
@@ -312,6 +313,44 @@ public partial class MainWindow : Window
         {
             Log.Error("UI", "Undo restore failed", ex);
             ExportStatus.Text = $"Undo failed: {ex.Message}";
+        }
+    }
+
+    private async void OnShiftInstances(object? sender, RoutedEventArgs e)
+    {
+        if (_project.Instances.Count == 0)
+        {
+            ExportStatus.Text = "Shift Times: no instances to shift.";
+            return;
+        }
+
+        var sel = SelectedInstance;
+        string? refTemplateName = null;
+        if (sel is not null)
+        {
+            var tpl = _project.Templates.FirstOrDefault(t => t.Id == sel.TemplateId);
+            refTemplateName = tpl?.Name ?? sel.TemplateId;
+        }
+
+        var result = await ShiftInstancesDialog.ShowAsync(this, sel, refTemplateName);
+        if (result is null) return;
+
+        try
+        {
+            var (shiftMs, scope) = result.Value;
+            var outcome = _api.ShiftInstanceTimes(_project, new ShiftInstancesRequest(
+                shiftMs, scope, sel?.Id));
+            ExportStatus.Text = outcome.ClampedToZeroCount == 0
+                ? $"Shifted {outcome.ShiftedCount} instance(s) by {Timecode.Format(shiftMs)}."
+                : $"Shifted {outcome.ShiftedCount} instance(s) by {Timecode.Format(shiftMs)} ({outcome.ClampedToZeroCount} clamped to 0).";
+            RefreshInstances();
+            await RefreshPreviewAsync();
+            await AutoSaveAsync("shift-instance-times");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("UI", "ShiftInstances failed", ex);
+            ExportStatus.Text = $"Shift failed: {ex.Message}";
         }
     }
 
@@ -660,13 +699,39 @@ public partial class MainWindow : Window
 
         try
         {
-            _project = await _api.SetVideoAsync(_project, path);
+            var isReplacement = !string.IsNullOrWhiteSpace(_project.VideoPath);
+            var oldPath = _project.VideoPath;
+            var oldDurationMs = _project.VideoDurationMs;
+            var instanceCount = _project.Instances.Count;
+
+            int shiftMs = 0;
+            if (isReplacement && instanceCount > 0)
+            {
+                var newInfo = await _api.ProbeVideoAsync(path);
+                if (newInfo.DurationMs != oldDurationMs)
+                {
+                    var chosen = await ReplaceVideoShiftDialog.ShowAsync(
+                        this,
+                        Path.GetFileName(oldPath) ?? "(unknown)",
+                        oldDurationMs,
+                        Path.GetFileName(path) ?? "(new)",
+                        newInfo.DurationMs,
+                        instanceCount);
+                    if (chosen is null) return; // user cancelled
+                    shiftMs = chosen.Value;
+                }
+            }
+
+            _project = shiftMs == 0
+                ? await _api.SetVideoAsync(_project, path)
+                : await _api.ReplaceVideoAsync(_project, path, shiftMs);
+
             ClearPlaybackFrameCache();
             TimeSlider.Maximum = Math.Max(1, _project.VideoDurationMs);
             TimeSlider.Value = 0;
             VideoInfoLabel.Text = $"{Path.GetFileName(path)} • {_project.VideoResolution.Width}x{_project.VideoResolution.Height} @ {_project.VideoFps:0.##} fps • {_project.VideoDurationMs / 1000.0:0.0}s";
             await RefreshPreviewAsync();
-            await AutoSaveAsync("set-video");
+            await AutoSaveAsync(shiftMs == 0 ? "set-video" : "replace-video");
         }
         catch (Exception ex)
         {

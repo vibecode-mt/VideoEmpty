@@ -54,6 +54,87 @@ public class VideoEmptyApiTests
         Assert.Throws<InvalidOperationException>(() => api.DeleteTemplate(p, BuiltInTemplates.StepTemplateId));
     }
 
+    [Fact]
+    public async Task ReplaceVideoAsync_ShiftsInstancesLater_AndClampsBelowZero()
+    {
+        var api = NewApi();
+        var p = api.CreateProject("p");
+        await api.SetVideoAsync(p, "old.mp4");
+        var a = api.AddInstance(p, new AddInstanceRequest(BuiltInTemplates.StepTemplateId, 0.5, 0.5, 1_000));
+        var b = api.AddInstance(p, new AddInstanceRequest(BuiltInTemplates.StepTemplateId, 0.5, 0.5, 5_000));
+
+        await api.ReplaceVideoAsync(p, "new.mp4", shiftMs: 10_000);
+        Assert.Equal("new.mp4", p.VideoPath);
+        Assert.Equal(11_000, p.Instances.Single(i => i.Id == a.Id).StartMs);
+        Assert.Equal(15_000, p.Instances.Single(i => i.Id == b.Id).StartMs);
+
+        await api.ReplaceVideoAsync(p, "new.mp4", shiftMs: -20_000);
+        Assert.Equal(0, p.Instances.Single(i => i.Id == a.Id).StartMs);
+        Assert.Equal(0, p.Instances.Single(i => i.Id == b.Id).StartMs);
+    }
+
+    [Fact]
+    public async Task ReplaceVideoAsync_ZeroShift_LeavesInstancesUnchanged()
+    {
+        var api = NewApi();
+        var p = api.CreateProject("p");
+        await api.SetVideoAsync(p, "old.mp4");
+        var a = api.AddInstance(p, new AddInstanceRequest(BuiltInTemplates.StepTemplateId, 0.5, 0.5, 2_500));
+
+        await api.ReplaceVideoAsync(p, "new.mp4", shiftMs: 0);
+        Assert.Equal(2_500, p.Instances.Single(i => i.Id == a.Id).StartMs);
+    }
+
+    [Fact]
+    public void ShiftInstanceTimes_All_AppliesToEveryInstance_AndReportsClamps()
+    {
+        var api = NewApi();
+        var p = api.CreateProject("p");
+        var a = api.AddInstance(p, new AddInstanceRequest(BuiltInTemplates.StepTemplateId, 0.5, 0.5, 1_000));
+        var b = api.AddInstance(p, new AddInstanceRequest(BuiltInTemplates.StepTemplateId, 0.5, 0.5, 5_000));
+
+        var r = api.ShiftInstanceTimes(p, new ShiftInstancesRequest(-2_000, InstanceShiftScope.All));
+        Assert.Equal(2, r.ShiftedCount);
+        Assert.Equal(1, r.ClampedToZeroCount); // a (1000 - 2000 -> 0)
+        Assert.Equal(0,     p.Instances.Single(i => i.Id == a.Id).StartMs);
+        Assert.Equal(3_000, p.Instances.Single(i => i.Id == b.Id).StartMs);
+    }
+
+    [Theory]
+    [InlineData(InstanceShiftScope.Before,      new[] { 1_000 })]                  // strictly < 3000
+    [InlineData(InstanceShiftScope.AtOrBefore,  new[] { 1_000, 3_000 })]
+    [InlineData(InstanceShiftScope.After,       new[] { 5_000 })]                  // strictly > 3000
+    [InlineData(InstanceShiftScope.AtOrAfter,   new[] { 3_000, 5_000 })]
+    [InlineData(InstanceShiftScope.OnlyReference, new[] { 3_000 })]
+    public void ShiftInstanceTimes_RelativeScopes_AffectExpectedInstances(InstanceShiftScope scope, int[] expectedShiftedStarts)
+    {
+        var api = NewApi();
+        var p = api.CreateProject("p");
+        var a = api.AddInstance(p, new AddInstanceRequest(BuiltInTemplates.StepTemplateId, 0.5, 0.5, 1_000));
+        var refInst = api.AddInstance(p, new AddInstanceRequest(BuiltInTemplates.StepTemplateId, 0.5, 0.5, 3_000));
+        var c = api.AddInstance(p, new AddInstanceRequest(BuiltInTemplates.StepTemplateId, 0.5, 0.5, 5_000));
+        var originalsById = p.Instances.ToDictionary(i => i.Id, i => i.StartMs);
+
+        var r = api.ShiftInstanceTimes(p, new ShiftInstancesRequest(+10_000, scope, refInst.Id));
+        Assert.Equal(expectedShiftedStarts.Length, r.ShiftedCount);
+
+        foreach (var inst in p.Instances)
+        {
+            var wasShifted = expectedShiftedStarts.Contains(originalsById[inst.Id]);
+            var expected = wasShifted ? originalsById[inst.Id] + 10_000 : originalsById[inst.Id];
+            Assert.Equal(expected, inst.StartMs);
+        }
+    }
+
+    [Fact]
+    public void ShiftInstanceTimes_NonAllScope_RequiresReferenceId()
+    {
+        var api = NewApi();
+        var p = api.CreateProject("p");
+        Assert.Throws<ArgumentException>(() =>
+            api.ShiftInstanceTimes(p, new ShiftInstancesRequest(1_000, InstanceShiftScope.After)));
+    }
+
     private sealed class FakeRenderer : ITemplateRenderer
     { public byte[] RenderTemplatePng(Template t, IReadOnlyDictionary<string,string>? v=null) => Array.Empty<byte>(); }
     private sealed class FakeProbe : IVideoProbe
